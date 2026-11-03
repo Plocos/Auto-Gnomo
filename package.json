@@ -1,0 +1,25 @@
+{
+  "name": "autonomous",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Gestión contable y fiscal para autónomos en España (offline)",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @autonomous/api --filter @autonomous/web dev",
+    "dev:api": "pnpm --filter @autonomous/api dev",
+    "dev:web": "pnpm --filter @autonomous/web dev",
+    "dev:desktop": "pnpm --filter @autonomous/desktop dev",
+    "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @autonomous/desktop build:desktop",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm --filter @autonomous/shared test && pnpm --filter @autonomous/tax-rules test && pnpm --filter @autonomous/api test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "seed": "pnpm --filter @autonomous/api seed",
+    "migrate": "pnpm --filter @autonomous/api migrate"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

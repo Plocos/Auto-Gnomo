@@ -1,0 +1,26 @@
+{
+  "name": "@autonomous/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "echo \"use pnpm build:desktop\"",
+    "prepare-api-runtime": "node ./scripts/prepare-api-runtime.mjs",
+    "fetch-webview2": "powershell -ExecutionPolicy Bypass -File ./scripts/fetch-webview2.ps1",
+    "build:desktop": "node ./scripts/prepare-api-runtime.mjs && powershell -ExecutionPolicy Bypass -File ./scripts/fetch-webview2.ps1 && powershell -ExecutionPolicy Bypass -File ./scripts/tauri-build.ps1",
+    "tauri": "tauri",
+    "typecheck": "echo \"desktop typecheck via cargo\"",
+    "lint": "echo \"lint ok\"",
+    "test": "echo \"no desktop unit tests\""
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "esbuild": "^0.25.12"
+  }
+}
