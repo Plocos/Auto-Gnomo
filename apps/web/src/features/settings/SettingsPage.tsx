@@ -2,11 +2,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Quarters, taxProfileSchema, toValidationIssues } from '@autonomous/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api, ApiClientError } from '../../lib/api';
+import {
+  checkDesktopUpdate,
+  installDesktopUpdate,
+  type DesktopUpdateInfo,
+  type DownloadProgress,
+} from '../../lib/desktopUpdater';
 import { pushError } from '../../lib/errorStore';
 import { isTauri, openProfile, pickFolder } from '../../lib/profile';
 import { useAutosave, type AutosaveStatus } from '../../lib/useAutosave';
 import { useProfileModal } from '../profiles/ProfileModalContext';
 import { Button, PageHeader } from '../../components/ui/primitives';
+import { AssistantModelSettings } from '../assistant/AssistantModelPanel';
 
 const ACTIVITY_CODES = [
   { value: 'A', label: 'A — Actividades incluidas en el IAE' },
@@ -439,11 +446,104 @@ export function SettingsPage() {
             <option value="caja">Caja (preparado, MVP usa devengo)</option>
           </select>
         </Field>
+
+        {isTauri() && <DesktopUpdateSection />}
       </div>
+      <AssistantModelSettings />
       <p className="mt-4 text-[12px] text-surface-muted">
-        Backup: copia la carpeta del perfil completa.
+        Backup: copia la carpeta del perfil completa. El modelo del asistente no va en esa carpeta.
       </p>
     </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function DesktopUpdateSection() {
+  const [status, setStatus] = useState<'idle' | 'checking' | 'available' | 'latest' | 'installing'>(
+    'idle',
+  );
+  const [info, setInfo] = useState<DesktopUpdateInfo | null>(null);
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const onCheck = async () => {
+    setStatus('checking');
+    setMessage(null);
+    setInfo(null);
+    setProgress(null);
+    try {
+      const update = await checkDesktopUpdate();
+      if (!update) {
+        setStatus('latest');
+        setMessage('Ya tienes la última versión.');
+        return;
+      }
+      setInfo(update);
+      setStatus('available');
+      setMessage(`Versión ${update.version} disponible.`);
+    } catch (e) {
+      setStatus('idle');
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const onInstall = async () => {
+    setStatus('installing');
+    setMessage(null);
+    setProgress(null);
+    try {
+      await installDesktopUpdate(setProgress);
+    } catch (e) {
+      setStatus(info ? 'available' : 'idle');
+      setMessage(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const pct =
+    progress?.contentLength && progress.contentLength > 0
+      ? Math.min(100, Math.round((progress.downloaded / progress.contentLength) * 100))
+      : null;
+
+  return (
+    <>
+      <h3 className="mt-4 text-[12px] font-semibold uppercase tracking-wide text-surface-muted">
+        Actualizaciones
+      </h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="default"
+          onClick={() => void onCheck()}
+          disabled={status === 'checking' || status === 'installing'}
+        >
+          {status === 'checking' ? 'Buscando…' : 'Buscar actualizaciones'}
+        </Button>
+        {status === 'available' && (
+          <Button variant="primary" onClick={() => void onInstall()}>
+            Instalar y reiniciar
+          </Button>
+        )}
+      </div>
+      {info?.notes && status === 'available' && (
+        <p className="mt-1 whitespace-pre-wrap text-[12px] text-surface-ink">{info.notes}</p>
+      )}
+      {status === 'installing' && (
+        <p className="mt-1 text-[12px] text-surface-muted">
+          {pct != null
+            ? `Descargando… ${pct}% (${formatBytes(progress!.downloaded)} / ${formatBytes(progress!.contentLength!)})`
+            : progress
+              ? `Descargando… ${formatBytes(progress.downloaded)}`
+              : 'Preparando descarga…'}
+        </p>
+      )}
+      {message && status !== 'installing' && (
+        <p className="mt-1 text-[12px] text-surface-muted">{message}</p>
+      )}
+    </>
   );
 }
 

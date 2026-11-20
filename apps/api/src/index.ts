@@ -5,7 +5,19 @@ import { runMigrations } from './db/migrate.js';
 import { closeSqlite, connectSqlite } from './db/sqlite.js';
 import { isProfileDir, upgradeLegacyVaultMeta } from './db/vault.js';
 import { errorHandler } from './plugins/error-handler.js';
+import { stopAssistantRuntime } from './assistant/runtime.js';
 import { registerRoutes } from './routes/index.js';
+
+if (process.env.AG_PDF_WORKER === '1') {
+  const { runPdfRenderWorker } = await import('./assistant/preprocess.js');
+  try {
+    await runPdfRenderWorker();
+    process.exit(0);
+  } catch (err) {
+    console.error(err);
+    process.exit(1);
+  }
+}
 
 async function main() {
   const app = Fastify({ logger: true });
@@ -29,6 +41,7 @@ async function main() {
   await registerRoutes(app);
 
   const shutdown = async () => {
+    stopAssistantRuntime();
     await app.close();
     closeSqlite();
     process.exit(0);

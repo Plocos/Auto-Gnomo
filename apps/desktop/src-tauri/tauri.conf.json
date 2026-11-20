@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
@@ -46,6 +47,14 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1RDkwQUU4OTEyNEM0RkIKUldUN3hDU1I2QXJabFZaTFZZU2FQbHdOYVlHUGFpRURxZHBIKy94OTVCNGIrVmNyd29PUUEwdjMK",
+      "endpoints": [
+        "https://github.com/Plocos/Auto-Gnomo/releases/latest/download/latest.json"
+      ]
     }
   }
 }

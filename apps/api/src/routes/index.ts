@@ -64,6 +64,7 @@ import {
   listMovements,
   updateMovement,
 } from '../domain/movements.js';
+import { registerAssistantRoutes } from './assistant.js';
 import {
   computeLiveModels,
   fileModel,
@@ -707,4 +708,5 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  await registerAssistantRoutes(app);
 }

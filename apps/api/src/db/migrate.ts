@@ -255,6 +255,34 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: '006_assistant',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS assistant_threads (
+          id TEXT PRIMARY KEY NOT NULL,
+          title TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS assistant_messages (
+          id TEXT PRIMARY KEY NOT NULL,
+          thread_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          files_json TEXT NOT NULL DEFAULT '[]',
+          proposals_json TEXT NOT NULL DEFAULT '[]',
+          summary TEXT,
+          warnings_json TEXT NOT NULL DEFAULT '[]',
+          reply_to_id TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_assistant_messages_thread
+          ON assistant_messages(thread_id, created_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: AppDb): void {

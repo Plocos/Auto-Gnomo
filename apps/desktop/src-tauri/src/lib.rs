@@ -449,10 +449,24 @@ fn free_api_port() {
   thread::sleep(Duration::from_millis(300));
 }
 
+fn assistant_dir() -> PathBuf {
+  #[cfg(windows)]
+  {
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+      return PathBuf::from(local).join("Autonomous").join("assistant");
+    }
+  }
+  let home = std::env::var("HOME")
+    .or_else(|_| std::env::var("USERPROFILE"))
+    .unwrap_or_else(|_| ".".into());
+  PathBuf::from(home).join(".autonomous").join("assistant")
+}
+
 #[cfg(not(debug_assertions))]
 fn apply_api_env(cmd: &mut Command, data_dir: &Path) {
   cmd
     .env("DATA_DIR", data_dir)
+    .env("ASSISTANT_DIR", assistant_dir())
     .env("API_HOST", "127.0.0.1")
     .env("API_PORT", API_PORT.to_string())
     .env("CORS_ORIGIN", "*")
@@ -506,6 +520,7 @@ fn spawn_api_process(app: &AppHandle, data_dir: &Path) -> Result<Child, String> 
     // En dev no forzamos NODE_ENV=production
     cmd
       .env("DATA_DIR", &data_dir)
+      .env("ASSISTANT_DIR", assistant_dir())
       .env("API_HOST", "127.0.0.1")
       .env("API_PORT", API_PORT.to_string())
       .env("CORS_ORIGIN", "*")
@@ -818,6 +833,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_process::init())
     .manage(ApiState::default())
     .invoke_handler(tauri::generate_handler![
       get_data_dir,
@@ -832,6 +848,9 @@ pub fn run() {
       pick_and_set_data_dir
     ])
     .setup(|app| {
+      #[cfg(desktop)]
+      app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+
       let handle = app.handle().clone();
       let state = app.state::<ApiState>();
       let cfg = load_config(&handle);

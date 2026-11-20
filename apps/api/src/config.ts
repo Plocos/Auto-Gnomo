@@ -1,5 +1,5 @@
 import { config } from 'dotenv';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -14,4 +14,13 @@ export const env = {
   // En escritorio Tauri siempre pasa DATA_DIR (carpeta del perfil del usuario).
   dataDir: process.env.DATA_DIR ?? resolve(repoRoot, 'data'),
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  assistantDir: process.env.ASSISTANT_DIR ?? defaultAssistantDir(),
 };
+
+function defaultAssistantDir(): string {
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return join(process.env.LOCALAPPDATA, 'Autonomous', 'assistant');
+  }
+  const home = process.env.HOME || process.env.USERPROFILE || '.';
+  return join(home, '.autonomous', 'assistant');
+}

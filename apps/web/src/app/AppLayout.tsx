@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { UpdateBanner } from '../components/UpdateBanner';
 import { api } from '../lib/api';
 import { useProfileModal } from '../features/profiles/ProfileModalContext';
 
@@ -15,6 +16,7 @@ const links = [
   { to: '/modelo-303', label: 'Modelo 303' },
   { to: '/alertas', label: 'Alertas' },
   { to: '/importar', label: 'Importar' },
+  { to: '/asistente', label: 'Asistente' },
   { to: '/auditoria', label: 'Auditoría' },
   { to: '/configuracion', label: 'Configuración' },
 ];
@@ -105,6 +107,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         <ErrorBanner />
+        <UpdateBanner />
         {topSeverity && (
           <div className={`alerts-banner alerts-banner-${topSeverity}`}>
             <span>

@@ -99,6 +99,19 @@ function findDuplicate(
   return Boolean(found);
 }
 
+export function movementMayBeDuplicate(
+  db: AppDb,
+  movement: {
+    partyName?: string;
+    invoiceNumber?: string;
+    fiscalDate: string;
+    totalCents: number;
+    excludeId?: string;
+  },
+): boolean {
+  return findDuplicate(db, movement);
+}
+
 function upsertParty(
   db: AppDb,
   name: string,
