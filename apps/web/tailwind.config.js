@@ -1,6 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       fontFamily: {
@@ -13,15 +14,19 @@ export default {
       },
       colors: {
         surface: {
-          DEFAULT: '#f3f1ec',
-          panel: '#faf9f6',
-          border: '#d4d0c8',
-          muted: '#6b6560',
-          ink: '#1c1917',
-          accent: '#0f5c4c',
-          danger: '#9b1c1c',
-          warn: '#9a6700',
-          ok: '#1a7f37',
+          DEFAULT: 'var(--surface)',
+          panel: 'var(--surface-panel)',
+          border: 'var(--surface-border)',
+          muted: 'var(--surface-muted)',
+          ink: 'var(--surface-ink)',
+          accent: 'var(--surface-accent)',
+          'accent-soft': 'var(--surface-accent-soft)',
+          danger: 'var(--surface-danger)',
+          warn: 'var(--surface-warn)',
+          ok: 'var(--surface-ok)',
+          field: 'var(--surface-field)',
+          hover: 'var(--surface-hover)',
+          on: 'var(--on-fill)',
         },
       },
     },

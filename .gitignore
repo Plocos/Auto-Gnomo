@@ -16,7 +16,8 @@ data/
 *.db-shm
 *.tsbuildinfo
 apps/desktop/src-tauri/target
-apps/desktop/src-tauri/api-runtime
+apps/desktop/src-tauri/api-runtime/*
+!apps/desktop/src-tauri/api-runtime/dev-placeholder.txt
 apps/desktop/src-tauri/.api-runtime-cache
 apps/desktop/src-tauri/Microsoft.WebView2.FixedVersionRuntime.*/
 apps/desktop/src-tauri/webview2-*.zip

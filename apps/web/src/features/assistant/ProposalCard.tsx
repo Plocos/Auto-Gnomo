@@ -99,7 +99,7 @@ function readPercent(raw: string): number {
   return percentToBps(n);
 }
 
-const fieldClass = 'mt-0.5 w-full border border-surface-border bg-white px-2 py-1 text-ui';
+const fieldClass = 'mt-0.5 w-full border border-surface-border bg-surface-field px-2 py-1 text-ui';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -132,23 +132,24 @@ export function ProposalCard({
   const [form, setForm] = useState<FormState>(() => fromProposal(proposal));
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [pdfOpen, setPdfOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const pdfPreview = Boolean(previewUrl && previewMime === 'application/pdf');
+  const imagePreview = Boolean(previewUrl && previewMime?.startsWith('image/'));
 
   useEffect(() => {
     setForm(fromProposal(proposal));
     setError(null);
-    setPdfOpen(false);
+    setPreviewOpen(false);
   }, [proposal]);
 
   useEffect(() => {
-    if (!pdfOpen) return;
+    if (!previewOpen) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPdfOpen(false);
+      if (event.key === 'Escape') setPreviewOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [pdfOpen]);
+  }, [previewOpen]);
 
   const computed = useMemo(() => {
     try {
@@ -214,21 +215,29 @@ export function ProposalCard({
   };
 
   return (
-    <article className="border border-surface-border bg-white p-3">
+    <article className="border border-surface-border bg-surface-panel p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <h3 className="text-[13px] font-semibold text-surface-ink">Movimiento propuesto</h3>
       </div>
       <div className="grid gap-3 lg:grid-cols-[220px_1fr]">
         <div className="min-h-24 border border-surface-border bg-surface p-2">
-          {previewUrl && previewMime?.startsWith('image/') && (
-            <img src={previewUrl} alt="Documento adjunto" className="max-h-64 w-full object-contain" />
-          )}
-          {pdfPreview && (
-            <iframe title="Miniatura del PDF" src={previewUrl} className="pointer-events-none h-64 w-full" />
-          )}
-          {pdfPreview && (
-            <div className="mt-2">
-              <Button onClick={() => setPdfOpen(true)}>Ver a tamaño normal</Button>
+          {previewUrl && (imagePreview || pdfPreview) && (
+            <div>
+              <div className="relative">
+                {imagePreview && (
+                  <img src={previewUrl} alt="" className="max-h-64 w-full object-contain" />
+                )}
+                {pdfPreview && (
+                  <iframe title="Miniatura del PDF" src={previewUrl} className="pointer-events-none h-64 w-full" />
+                )}
+                <button
+                  type="button"
+                  className="absolute inset-0 cursor-zoom-in"
+                  onClick={() => setPreviewOpen(true)}
+                  aria-label="Ver el documento a pantalla completa"
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-surface-accent">Pulsa para verlo a pantalla completa</p>
             </div>
           )}
           {!previewUrl && <p className="text-[12px] text-surface-muted">Sin vista previa.</p>}
@@ -365,23 +374,23 @@ export function ProposalCard({
           Volver a reconocer
         </Button>
       </div>
-      {pdfOpen && previewUrl && (
+      {previewOpen && previewUrl && (
         <div
-          className="fixed inset-0 z-50 flex flex-col bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex flex-col bg-black"
           role="dialog"
           aria-modal="true"
-          aria-label="Documento PDF"
-          onClick={() => setPdfOpen(false)}
+          aria-label="Documento a pantalla completa"
         >
-          <div
-            className="flex min-h-0 flex-1 flex-col border border-surface-border bg-white"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
-              <p className="text-[13px] font-semibold text-surface-ink">Documento</p>
-              <Button onClick={() => setPdfOpen(false)}>Cerrar</Button>
-            </div>
-            <iframe title="Documento PDF" src={previewUrl} className="min-h-0 w-full flex-1 bg-white" />
+          <div className="flex items-center justify-between gap-2 px-3 py-2 text-white">
+            <p className="text-[13px]">Documento</p>
+            <Button onClick={() => setPreviewOpen(false)}>Cerrar</Button>
+          </div>
+          <div className="min-h-0 flex-1">
+            {imagePreview ? (
+              <img src={previewUrl} alt="Documento adjunto" className="h-full w-full object-contain" />
+            ) : (
+              <iframe title="Documento" src={previewUrl} className="h-full w-full bg-surface-field" />
+            )}
           </div>
         </div>
       )}

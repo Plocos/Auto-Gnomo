@@ -3,10 +3,13 @@ import {
   ErrorCodes,
   assistantAcceptSchema,
   assistantFileSchema,
+  assistantImportSchema,
   assistantMessageSchema,
   assistantProposalSchema,
+  movementCreateSchema,
   type AssistantAcceptInput,
   type AssistantFile,
+  type AssistantImport,
   type AssistantMessage,
   type AssistantProposal,
   type MovementCreateInput,
@@ -17,7 +20,9 @@ import { newId, nowIso } from '../db/schema.js';
 import type { AppDb } from '../db/sqlite.js';
 import { getDataDir } from '../db/sqlite.js';
 import { createAssetFromMovement } from '../domain/assets.js';
+import { parseImportText } from '../domain/import-export.js';
 import { createMovement, deleteMovement } from '../domain/movements.js';
+import { buildChatContext, chatPrompt } from './chat.js';
 import { MAX_IMAGES } from './catalog.js';
 import { loadPromptContext } from './context.js';
 import { applyPartyHistory } from './history.js';
@@ -25,13 +30,16 @@ import { constrainCategory, extractJsonObject, normalizeModelOutput } from './pa
 import { prepareDocument, sniffMime } from './preprocess.js';
 import { contextBlock, repairPrompt, systemPrompt } from './prompt.js';
 import { reviewProposal } from './review.js';
-import { chatVision } from './runtime.js';
+import { chatText, chatVision, clearReadStep, reportReadStep } from './runtime.js';
 
 export type Upload = { filename: string; mime: string; buffer: Buffer };
+
+type ThreadMode = 'chat' | 'invoice';
 
 type ThreadRow = {
   id: string;
   title: string | null;
+  mode?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -45,6 +53,7 @@ type MessageRow = {
   proposals_json: string;
   summary: string | null;
   warnings_json: string;
+  import_json?: string | null;
   reply_to_id: string | null;
   created_at: string;
 };
@@ -59,6 +68,16 @@ function parseList<T>(raw: string, schema: { parse: (value: unknown) => T }, fal
   }
 }
 
+function parseImportPreview(raw: string | null | undefined): AssistantImport | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = assistantImportSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function toMessage(row: MessageRow): AssistantMessage {
   return assistantMessageSchema.parse({
     id: row.id,
@@ -69,6 +88,7 @@ function toMessage(row: MessageRow): AssistantMessage {
     proposals: parseList(row.proposals_json, assistantProposalSchema, []),
     summary: row.summary ?? undefined,
     warnings: parseList(row.warnings_json, { parse: (v: unknown) => String(v) }, []),
+    importPreview: parseImportPreview(row.import_json),
     replyToId: row.reply_to_id ?? undefined,
     createdAt: row.created_at,
   });
@@ -102,26 +122,44 @@ function activeYear(db: AppDb): number {
   return row?.active_fiscal_year ?? new Date().getUTCFullYear();
 }
 
-export function listThreads(db: AppDb): { id: string; title: string | null; updatedAt: string }[] {
-  const rows = db
-    .prepare(`SELECT id, title, updated_at FROM assistant_threads ORDER BY updated_at DESC LIMIT 20`)
-    .all() as Pick<ThreadRow, 'id' | 'title' | 'updated_at'>[];
-  return rows.map((row) => ({ id: row.id, title: row.title, updatedAt: row.updated_at }));
+function threadMode(row: { mode?: string | null }): ThreadMode {
+  return row.mode === 'chat' ? 'chat' : 'invoice';
 }
 
-export function createThread(db: AppDb): { id: string } {
+export function listThreads(
+  db: AppDb,
+  mode?: ThreadMode,
+): { id: string; title: string | null; updatedAt: string; mode: ThreadMode }[] {
+  const rows = (
+    mode
+      ? db
+          .prepare(
+            `SELECT id, title, mode, updated_at FROM assistant_threads WHERE mode = ? ORDER BY updated_at DESC LIMIT 20`,
+          )
+          .all(mode)
+      : db
+          .prepare(`SELECT id, title, mode, updated_at FROM assistant_threads ORDER BY updated_at DESC LIMIT 20`)
+          .all()
+  ) as Pick<ThreadRow, 'id' | 'title' | 'mode' | 'updated_at'>[];
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    updatedAt: row.updated_at,
+    mode: threadMode(row),
+  }));
+}
+
+export function createThread(db: AppDb, mode: ThreadMode = 'invoice'): { id: string; mode: ThreadMode } {
   const id = newId();
   const now = nowIso();
-  db.prepare(`INSERT INTO assistant_threads (id, title, created_at, updated_at) VALUES (?, NULL, ?, ?)`).run(
-    id,
-    now,
-    now,
-  );
-  return { id };
+  db.prepare(
+    `INSERT INTO assistant_threads (id, title, mode, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)`,
+  ).run(id, mode, now, now);
+  return { id, mode };
 }
 
 export function getThread(db: AppDb, threadId: string): {
-  thread: { id: string; title: string | null; updatedAt: string };
+  thread: { id: string; title: string | null; updatedAt: string; mode: ThreadMode };
   messages: AssistantMessage[];
   categories: { key: string; name: string; type: string }[];
 } {
@@ -136,7 +174,7 @@ export function getThread(db: AppDb, threadId: string): {
     type: string;
   }[];
   return {
-    thread: { id: thread.id, title: thread.title, updatedAt: thread.updated_at },
+    thread: { id: thread.id, title: thread.title, updatedAt: thread.updated_at, mode: threadMode(thread) },
     messages: rows.map(toMessage),
     categories,
   };
@@ -163,15 +201,22 @@ function saveProposals(db: AppDb, messageId: string, proposals: AssistantProposa
   );
 }
 
-async function storeUpload(threadId: string, upload: Upload): Promise<AssistantFile> {
-  const mime = sniffMime(upload.filename, upload.mime);
-  if (!mime) {
-    throw new AppError(
-      ErrorCodes.VALIDATION_ERROR,
-      `«${upload.filename}» no es una foto (JPEG, PNG, WebP) ni un PDF.`,
-      400,
-    );
+function uploadKind(upload: Upload): 'document' | 'table' | 'spreadsheet' | 'unknown' {
+  const name = upload.filename.toLowerCase();
+  if (/\.(xlsx|xls)$/.test(name) || /spreadsheet|excel/i.test(upload.mime)) return 'spreadsheet';
+  if (
+    /\.(csv|tsv|json)$/.test(name) ||
+    upload.mime === 'text/csv' ||
+    upload.mime === 'application/json' ||
+    upload.mime === 'text/tab-separated-values'
+  ) {
+    return 'table';
   }
+  if (sniffMime(upload.filename, upload.mime)) return 'document';
+  return 'unknown';
+}
+
+async function storeUpload(threadId: string, upload: Upload, mime: string): Promise<AssistantFile> {
   const id = newId();
   const relativePath = join('documents', 'inbox', threadId, `${id}-${safeName(upload.filename)}`).replaceAll('\\', '/');
   const full = insideDataDir(relativePath);
@@ -184,48 +229,308 @@ function filesOf(row: MessageRow): AssistantFile[] {
   return parseList(row.files_json, assistantFileSchema, []);
 }
 
+function touchThread(db: AppDb, thread: ThreadRow, title: string, now: string): void {
+  if (!thread.title) {
+    db.prepare(`UPDATE assistant_threads SET title = ?, updated_at = ? WHERE id = ?`).run(title.slice(0, 80), now, thread.id);
+  } else {
+    db.prepare(`UPDATE assistant_threads SET updated_at = ? WHERE id = ?`).run(now, thread.id);
+  }
+}
+
+function insertUserMessage(
+  db: AppDb,
+  threadId: string,
+  prompt: string,
+  files: AssistantFile[],
+  replyToId: string | null,
+  now: string,
+): string {
+  const userId = newId();
+  db.prepare(
+    `INSERT INTO assistant_messages
+      (id, thread_id, role, content, files_json, proposals_json, summary, warnings_json, reply_to_id, created_at)
+     VALUES (?, ?, 'user', ?, ?, '[]', NULL, '[]', ?, ?)`,
+  ).run(userId, threadId, prompt, JSON.stringify(files), replyToId, now);
+  return userId;
+}
+
 export async function postMessage(
   db: AppDb,
   threadId: string,
   input: { prompt: string; retryMessageId?: string; uploads: Upload[] },
 ): Promise<{ user: AssistantMessage; assistant: AssistantMessage }> {
   const thread = requireThread(db, threadId);
+  if (threadMode(thread) === 'chat') return postChatMessage(db, thread, input);
+  return postInvoiceMessage(db, thread, input);
+}
+
+async function postChatMessage(
+  db: AppDb,
+  thread: ThreadRow,
+  input: { prompt: string; retryMessageId?: string; uploads: Upload[] },
+): Promise<{ user: AssistantMessage; assistant: AssistantMessage }> {
+  if (input.uploads.length) {
+    throw new AppError(
+      ErrorCodes.VALIDATION_ERROR,
+      'En el modo Chat no se adjuntan archivos. Cambia a Factura para leer un documento o una tabla.',
+      400,
+    );
+  }
   const prompt = input.prompt.trim().slice(0, 2000);
-  let files: AssistantFile[] = [];
-  if (input.retryMessageId) {
-    const previous = loadMessage(db, threadId, input.retryMessageId);
-    const sourceId = previous.reply_to_id ?? previous.id;
-    const source = sourceId === previous.id ? previous : loadMessage(db, threadId, sourceId);
-    files = filesOf(source);
-  }
-  for (const upload of input.uploads) {
-    files.push(await storeUpload(threadId, upload));
-  }
-  if (!files.length) {
-    throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Añade una foto o un PDF.', 400);
-  }
+  if (!prompt) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Escribe una pregunta.', 400);
 
   const now = nowIso();
-  const userId = newId();
+  const userId = insertUserMessage(db, thread.id, prompt, [], null, now);
+  touchThread(db, thread, prompt, now);
+
+  const prior = db
+    .prepare(
+      `SELECT role, content FROM assistant_messages
+       WHERE thread_id = ? AND id != ? ORDER BY created_at ASC`,
+    )
+    .all(thread.id, userId) as { role: string; content: string }[];
+  const history = prior.slice(-16).map((row) => ({
+    role: row.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+    content: row.content.slice(0, 2000),
+  }));
+
+  let answer: string;
+  try {
+    reportReadStep(1, 'Reuniendo tus datos');
+    const context = await buildChatContext(db, prompt);
+    answer = await chatText(chatPrompt(context), [...history, { role: 'user', content: prompt }]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status = message.includes('Descarga el modelo') ? 409 : 502;
+    throw new AppError(status === 409 ? ErrorCodes.CONFLICT : ErrorCodes.INTERNAL, message, status);
+  } finally {
+    clearReadStep();
+  }
+
+  const id = newId();
+  const createdAt = nowIso();
   db.prepare(
     `INSERT INTO assistant_messages
       (id, thread_id, role, content, files_json, proposals_json, summary, warnings_json, reply_to_id, created_at)
-     VALUES (?, ?, 'user', ?, ?, '[]', NULL, '[]', ?, ?)`,
-  ).run(userId, threadId, prompt, JSON.stringify(files), input.retryMessageId ?? null, now);
+     VALUES (?, ?, 'assistant', ?, '[]', '[]', ?, '[]', ?, ?)`,
+  ).run(id, thread.id, answer.trim(), answer.trim().slice(0, 240), userId, createdAt);
+  db.prepare(`UPDATE assistant_threads SET updated_at = ? WHERE id = ?`).run(createdAt, thread.id);
+  return { user: toMessage(loadMessage(db, thread.id, userId)), assistant: toMessage(loadMessage(db, thread.id, id)) };
+}
 
-  if (!thread.title) {
-    const title = (prompt || files[0]?.filename || 'Documento').slice(0, 80);
-    db.prepare(`UPDATE assistant_threads SET title = ?, updated_at = ? WHERE id = ?`).run(title, now, threadId);
-  } else {
-    db.prepare(`UPDATE assistant_threads SET updated_at = ? WHERE id = ?`).run(now, threadId);
+async function postInvoiceMessage(
+  db: AppDb,
+  thread: ThreadRow,
+  input: { prompt: string; retryMessageId?: string; uploads: Upload[] },
+): Promise<{ user: AssistantMessage; assistant: AssistantMessage }> {
+  const prompt = input.prompt.trim().slice(0, 2000);
+  let files: AssistantFile[] = [];
+  if (input.retryMessageId) {
+    const previous = loadMessage(db, thread.id, input.retryMessageId);
+    const sourceId = previous.reply_to_id ?? previous.id;
+    const source = sourceId === previous.id ? previous : loadMessage(db, thread.id, sourceId);
+    files = filesOf(source);
   }
 
-  const assistant = await recognize(db, threadId, userId, prompt, files);
-  const userRow = loadMessage(db, threadId, userId);
-  return { user: toMessage(userRow), assistant };
+  const spreadsheet = input.uploads.find((upload) => uploadKind(upload) === 'spreadsheet');
+  if (spreadsheet) {
+    throw new AppError(
+      ErrorCodes.VALIDATION_ERROR,
+      `«${spreadsheet.filename}» es Excel. Expórtalo a CSV y vuelve a soltarlo.`,
+      400,
+    );
+  }
+  const unknown = input.uploads.find((upload) => uploadKind(upload) === 'unknown');
+  if (unknown) {
+    throw new AppError(
+      ErrorCodes.VALIDATION_ERROR,
+      `«${unknown.filename}» no es una foto, un PDF ni una tabla CSV, TSV o JSON.`,
+      400,
+    );
+  }
+  const tables = input.uploads.filter((upload) => uploadKind(upload) === 'table');
+  const documents = input.uploads.filter((upload) => uploadKind(upload) === 'document');
+  if (tables.length && (documents.length || files.length)) {
+    throw new AppError(
+      ErrorCodes.VALIDATION_ERROR,
+      'Separa las fotos de las tablas: envía cada tipo en un mensaje.',
+      400,
+    );
+  }
+
+  if (tables.length) {
+    for (const upload of tables) {
+      const mime = upload.filename.toLowerCase().endsWith('.json') ? 'application/json' : 'text/csv';
+      files.push(await storeUpload(thread.id, upload, mime));
+    }
+    return saveTableImport(db, thread, prompt, files, tables);
+  }
+
+  for (const upload of documents) {
+    const mime = sniffMime(upload.filename, upload.mime);
+    if (!mime) {
+      throw new AppError(
+        ErrorCodes.VALIDATION_ERROR,
+        `«${upload.filename}» no es una foto (JPEG, PNG, WebP) ni un PDF.`,
+        400,
+      );
+    }
+    files.push(await storeUpload(thread.id, upload, mime));
+  }
+  if (!files.length) {
+    throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Añade una foto, un PDF o una tabla (CSV, TSV o JSON).', 400);
+  }
+
+  const now = nowIso();
+  const userId = insertUserMessage(db, thread.id, prompt, files, input.retryMessageId ?? null, now);
+  touchThread(db, thread, prompt || files[0]?.filename || 'Documento', now);
+  const assistant = await recognize(db, thread.id, userId, prompt, files);
+  return { user: toMessage(loadMessage(db, thread.id, userId)), assistant };
+}
+
+type StoredImportRow = {
+  row: number;
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  filename?: string;
+  concept?: string;
+  fiscalDate?: string;
+  type?: string;
+  totalCents?: number;
+  data?: MovementCreateInput;
+  savedId?: string;
+};
+
+type StoredImport = {
+  status: 'pending' | 'saved';
+  filename: string;
+  summary: { total: number; ok: number; errors: number; warnings: number };
+  rows: StoredImportRow[];
+  createdCount?: number;
+};
+
+function readStoredImport(raw: string | null | undefined): StoredImport | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as StoredImport;
+    if (!value || !Array.isArray(value.rows)) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+async function saveTableImport(
+  db: AppDb,
+  thread: ThreadRow,
+  prompt: string,
+  files: AssistantFile[],
+  uploads: Upload[],
+): Promise<{ user: AssistantMessage; assistant: AssistantMessage }> {
+  const rows: StoredImportRow[] = [];
+  for (const upload of uploads) {
+    const text = upload.buffer.toString('utf8');
+    const parsed = parseImportText(text);
+    if (parsed.rows.length > 500) {
+      throw new AppError(ErrorCodes.VALIDATION_ERROR, 'El archivo tiene más de 500 filas. Divídelo.', 400);
+    }
+    for (const row of parsed.rows) {
+      rows.push({
+        row: row.row,
+        ok: row.ok,
+        errors: row.errors,
+        warnings: row.warnings,
+        filename: upload.filename,
+        concept: row.data?.concept,
+        fiscalDate: row.data?.fiscalDate,
+        type: row.data?.type,
+        totalCents: typeof row.data?.totalCents === 'number' ? row.data.totalCents : undefined,
+        data: row.data,
+      });
+    }
+  }
+  if (rows.length > 500) {
+    throw new AppError(ErrorCodes.VALIDATION_ERROR, 'El archivo tiene más de 500 filas. Divídelo.', 400);
+  }
+  const preview: StoredImport = {
+    status: 'pending',
+    filename: uploads.map((upload) => upload.filename).join(', '),
+    summary: {
+      total: rows.length,
+      ok: rows.filter((row) => row.ok).length,
+      errors: rows.filter((row) => !row.ok).length,
+      warnings: rows.filter((row) => row.warnings.length).length,
+    },
+    rows,
+    createdCount: 0,
+  };
+
+  const now = nowIso();
+  const userId = insertUserMessage(db, thread.id, prompt, files, null, now);
+  touchThread(db, thread, prompt || preview.filename || 'Tabla', now);
+  const id = newId();
+  const summary = `${preview.summary.ok} de ${preview.summary.total} filas listas para guardar.`;
+  db.prepare(
+    `INSERT INTO assistant_messages
+      (id, thread_id, role, content, files_json, proposals_json, summary, warnings_json, import_json, reply_to_id, created_at)
+     VALUES (?, ?, 'assistant', ?, ?, '[]', ?, '[]', ?, ?, ?)`,
+  ).run(id, thread.id, summary, JSON.stringify(files), summary, JSON.stringify(preview), userId, now);
+  return { user: toMessage(loadMessage(db, thread.id, userId)), assistant: toMessage(loadMessage(db, thread.id, id)) };
+}
+
+export async function confirmImport(db: AppDb, threadId: string, messageId: string): Promise<AssistantMessage> {
+  const row = loadMessage(db, threadId, messageId);
+  const preview = readStoredImport(row.import_json);
+  if (!preview) throw new AppError(ErrorCodes.NOT_FOUND, 'No hay una tabla pendiente en este mensaje.', 404);
+  let created = preview.createdCount ?? preview.rows.filter((item) => item.savedId).length;
+  for (const item of preview.rows) {
+    if (!item.ok || !item.data || item.savedId) continue;
+    const parsed = movementCreateSchema.safeParse(item.data);
+    if (!parsed.success) {
+      item.ok = false;
+      item.errors.push('La fila ya no es válida.');
+      continue;
+    }
+    const result = await createMovement(db, { ...parsed.data, source: 'import', status: 'confirmed' });
+    item.savedId = String(result.movement.id);
+    created += 1;
+    preview.createdCount = created;
+    db.prepare(`UPDATE assistant_messages SET import_json = ? WHERE id = ?`).run(JSON.stringify(preview), messageId);
+  }
+  const pending = preview.rows.some((item) => item.ok && item.data && !item.savedId);
+  preview.status = pending ? 'pending' : 'saved';
+  preview.createdCount = created;
+  preview.summary.ok = preview.rows.filter((item) => item.ok).length;
+  preview.summary.errors = preview.rows.filter((item) => !item.ok).length;
+  const summary = preview.status === 'saved'
+    ? `Guardadas ${created} filas.`
+    : `Guardadas ${created} filas. Quedan filas sin guardar.`;
+  db.prepare(`UPDATE assistant_messages SET import_json = ?, summary = ?, content = ? WHERE id = ?`).run(
+    JSON.stringify(preview),
+    summary,
+    summary,
+    messageId,
+  );
+  return toMessage(loadMessage(db, threadId, messageId));
 }
 
 async function recognize(
+  db: AppDb,
+  threadId: string,
+  userMessageId: string,
+  prompt: string,
+  files: AssistantFile[],
+): Promise<AssistantMessage> {
+  reportReadStep(1, 'Preparando el documento');
+  try {
+    return await recognizeInner(db, threadId, userMessageId, prompt, files);
+  } finally {
+    clearReadStep();
+  }
+}
+
+async function recognizeInner(
   db: AppDb,
   threadId: string,
   userMessageId: string,
@@ -296,6 +601,7 @@ async function recognize(
 
   let normalized: ReturnType<typeof normalizeModelOutput>;
   try {
+    reportReadStep(4, 'Ordenando los datos');
     normalized = normalizeModelOutput(extractJsonObject(modelText), {
       files: prepared.map((doc) => ({
         id: doc.file.id,
@@ -307,6 +613,7 @@ async function recognize(
   } catch {
     try {
       const repaired = await chatVision(systemPrompt(), repairPrompt(modelText), []);
+      reportReadStep(4, 'Ordenando los datos');
       normalized = normalizeModelOutput(extractJsonObject(repaired), {
         files: prepared.map((doc) => ({
           id: doc.file.id,

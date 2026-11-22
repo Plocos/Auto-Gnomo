@@ -1,14 +1,12 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AssistantProgress, AssistantStatus } from '@autonomous/shared';
 import { env } from '../config.js';
+import { downloadToFile } from './download.js';
 import {
   HF_BASE,
   LLAMA_PORT,
@@ -62,6 +60,13 @@ function mmprojPath(): string {
 
 function pidPath(): string {
   return join(dir(), 'server.pid');
+}
+
+/** Si cambia, el motor que ya esté en marcha se reinicia para aplicar los límites de imagen. */
+const LAUNCH_STAMP = 'ctx=8192;image-min-tokens=4;image-max-tokens=768';
+
+function launchStampPath(): string {
+  return join(dir(), 'server.launch');
 }
 
 function manifestPath(): string {
@@ -162,29 +167,25 @@ function setProgress(partial: AssistantProgress): void {
   emit();
 }
 
-async function downloadTo(url: string, dest: string, onChunk: (received: number, total: number | null) => void): Promise<void> {
-  const tmp = `${dest}.part`;
-  await mkdir(join(dest, '..'), { recursive: true });
-  const res = await fetch(url, {
-    redirect: 'follow',
-    headers: { 'User-Agent': 'Auto-Gnomo' },
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`La descarga falló (${res.status}) ${url}`);
-  }
-  const totalHeader = Number(res.headers.get('content-length'));
-  const total = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : null;
-  let received = 0;
-  const counter = new Transform({
-    transform(chunk: Buffer, _enc, cb) {
-      received += chunk.length;
-      onChunk(received, total);
-      cb(null, chunk);
-    },
-  });
-  const webStream = res.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>;
-  await pipeline(Readable.fromWeb(webStream), counter, createWriteStream(tmp));
-  await rename(tmp, dest);
+const READ_STEPS = 4;
+
+export function reportReadStep(step: number, label: string): void {
+  if (downloading) return;
+  progress = {
+    label,
+    received: step,
+    total: READ_STEPS,
+    percent: Math.round((step / READ_STEPS) * 100),
+    fileIndex: step,
+    fileCount: READ_STEPS,
+  };
+  emit();
+}
+
+export function clearReadStep(): void {
+  if (downloading) return;
+  progress = null;
+  emit();
 }
 
 function sha256(path: string): Promise<string> {
@@ -230,9 +231,9 @@ async function ensureRuntimeZip(): Promise<void> {
     fileIndex: 1,
     fileCount: 3,
   });
-  await downloadTo(LLAMA_ZIP_URL, zipPath, (received, total) => {
+  await downloadToFile(LLAMA_ZIP_URL, zipPath, (received, total, note) => {
     setProgress({
-      label: 'Descargando el motor local',
+      label: note ?? 'Descargando el motor local',
       received,
       total,
       percent: total ? Math.round((received / total) * 100) : null,
@@ -259,9 +260,9 @@ async function ensureWeight(file: string, minBytes: number, index: number, label
   await rm(dest, { force: true });
   await mkdir(modelsDir(), { recursive: true });
   setProgress({ label, received: 0, total: null, percent: null, fileIndex: index, fileCount: 3 });
-  await downloadTo(`${HF_BASE}/${file}`, dest, (received, total) => {
+  await downloadToFile(`${HF_BASE}/${file}`, dest, (received, total, note) => {
     setProgress({
-      label,
+      label: note ?? label,
       received,
       total,
       percent: total ? Math.round((received / total) * 100) : null,
@@ -325,7 +326,11 @@ async function runInstall(force: boolean): Promise<void> {
     installedCache = false;
     await rm(runtimeDir(), { recursive: true, force: true });
     await rm(modelPath(), { force: true });
+    await rm(`${modelPath()}.part`, { force: true });
     await rm(mmprojPath(), { force: true });
+    await rm(`${mmprojPath()}.part`, { force: true });
+    await rm(join(dir(), LLAMA_ZIP_NAME), { force: true });
+    await rm(join(dir(), `${LLAMA_ZIP_NAME}.part`), { force: true });
     await rm(manifestPath(), { force: true });
   }
   await ensureRuntimeZip();
@@ -377,13 +382,19 @@ async function readPid(): Promise<number | null> {
   }
 }
 
-export function stopAssistantRuntime(): void {
-  const pid = child?.pid ?? ownedPid;
+let stopping = false;
+
+export function stopAssistantRuntime(extraPid?: number | null): void {
+  const pid = extraPid ?? child?.pid ?? ownedPid;
+  stopping = true;
   child = null;
   ownedPid = null;
   ready = false;
   loading = false;
-  if (!pid) return;
+  if (!pid) {
+    stopping = false;
+    return;
+  }
   if (process.platform === 'win32') {
     spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
   } else {
@@ -425,6 +436,22 @@ async function waitUntilReady(pid: number): Promise<void> {
   throw new Error('El modelo tardó demasiado en cargarse.');
 }
 
+async function launchMatches(): Promise<boolean> {
+  try {
+    return (await readFile(launchStampPath(), 'utf8')).trim() === LAUNCH_STAMP;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntilStopped(pid: number | null): Promise<void> {
+  if (!pid) return;
+  const deadline = Date.now() + 8000;
+  while (alive(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 async function spawnServer(): Promise<void> {
   const exe = await findServerBinary();
   if (!exe) throw new Error('Falta el motor local. Descárgalo de nuevo.');
@@ -438,6 +465,10 @@ async function spawnServer(): Promise<void> {
       mmprojPath(),
       '-c',
       '8192',
+      '--image-min-tokens',
+      '4',
+      '--image-max-tokens',
+      '768',
       '--host',
       '127.0.0.1',
       '--port',
@@ -459,11 +490,15 @@ async function spawnServer(): Promise<void> {
       ownedPid = null;
       ready = false;
       loading = false;
-      error = `El motor se cerró (código ${code ?? '?'}). ${stderrTail.slice(-400)}`.trim();
+      if (!stopping) {
+        error = `El motor se cerró (código ${code ?? '?'}). ${stderrTail.slice(-400)}`.trim();
+      }
       emit();
     }
+    stopping = false;
   });
   if (!ownedPid) throw new Error('No se pudo arrancar el motor local.');
+  await writeFile(launchStampPath(), LAUNCH_STAMP);
   await waitUntilReady(ownedPid);
 }
 
@@ -471,23 +506,22 @@ export async function ensureRuntime(): Promise<void> {
   if (!(await modelInstalled())) {
     throw new Error('Descarga el modelo antes de leer documentos.');
   }
-  if (ready && (await healthy())) return;
+  if (ready && (await healthy()) && (await launchMatches())) return;
   if (!startPromise) {
     loading = true;
     error = null;
     emit();
     startPromise = (async () => {
-      if (await healthy()) {
+      const runningPid = child?.pid ?? ownedPid ?? (await readPid());
+      if ((await healthy()) && (await launchMatches())) {
         ready = true;
         loading = false;
         emit();
         return;
       }
-      const pid = await readPid();
-      if (pid && alive(pid)) {
-        ownedPid = pid;
-        await waitUntilReady(pid);
-        return;
+      if (runningPid && alive(runningPid)) {
+        stopAssistantRuntime(runningPid);
+        await waitUntilStopped(runningPid);
       }
       await spawnServer();
     })()
@@ -509,7 +543,9 @@ export async function ensureRuntime(): Promise<void> {
 type ImagePart = { mime: string; base64: string };
 
 export async function chatVision(system: string, userText: string, images: ImagePart[]): Promise<string> {
+  reportReadStep(2, 'Cargando el modelo');
   await ensureRuntime();
+  reportReadStep(3, 'Leyendo el documento');
   const content: unknown[] = [{ type: 'text', text: userText }];
   for (const image of images) {
     content.push({
@@ -517,18 +553,29 @@ export async function chatVision(system: string, userText: string, images: Image
       image_url: { url: `data:${image.mime};base64,${image.base64}` },
     });
   }
-  return postChat(system, content, true);
+  return postChat(system, [{ role: 'user', content }], true);
 }
 
-async function postChat(system: string, content: unknown, withFormat: boolean): Promise<string> {
+export async function chatText(
+  system: string,
+  messages: { role: 'user' | 'assistant'; content: string }[],
+): Promise<string> {
+  reportReadStep(2, 'Cargando el modelo');
+  await ensureRuntime();
+  reportReadStep(3, 'Respondiendo');
+  return postChat(system, messages, false);
+}
+
+async function postChat(
+  system: string,
+  messages: { role: 'user' | 'assistant'; content: unknown }[],
+  withFormat: boolean,
+): Promise<string> {
   const body: Record<string, unknown> = {
     model: MODEL_LABEL,
-    temperature: 0,
-    max_tokens: 4096,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content },
-    ],
+    temperature: withFormat ? 0 : 0.2,
+    max_tokens: withFormat ? 4096 : 2048,
+    messages: [{ role: 'system', content: system }, ...messages],
   };
   if (withFormat) body.response_format = { type: 'json_object' };
   const res = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/chat/completions`, {
@@ -539,7 +586,10 @@ async function postChat(system: string, content: unknown, withFormat: boolean): 
   });
   if (!res.ok) {
     const detail = (await res.text()).slice(0, 500);
-    if (withFormat && res.status === 400) return postChat(system, content, false);
+    if (withFormat && res.status === 400) return postChat(system, messages, false);
+    if (/mtmd/i.test(detail)) {
+      throw new Error('No se pudo leer la imagen. Prueba con una foto más nítida o con menos páginas.');
+    }
     throw new Error(`El modelo respondió ${res.status}. ${detail}`);
   }
   const json = (await res.json()) as {

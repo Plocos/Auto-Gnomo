@@ -12,7 +12,6 @@ import { QuartersPage } from '../features/quarters/QuartersPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { Tax130Page } from '../features/tax130/Tax130Page';
 import { Tax303Page } from '../features/tax303/Tax303Page';
-import { ImportPage } from '../features/clipboard/ImportPage';
 import { AssistantPage } from '../features/assistant/AssistantPage';
 import { ProfileModalProvider } from '../features/profiles/ProfileModalContext';
 import { ProfilePickerPage } from '../features/profiles/ProfilePickerPage';
@@ -63,7 +62,7 @@ export function App() {
                   <Route path="/modelo-303" element={<Tax303Page />} />
                   <Route path="/alertas" element={<AlertsPage />} />
                   <Route path="/auditoria" element={<AuditPage />} />
-                  <Route path="/importar" element={<ImportPage />} />
+                  <Route path="/importar" element={<Navigate to="/asistente" replace />} />
                   <Route path="/asistente" element={<AssistantPage />} />
                   <Route path="/configuracion" element={<SettingsPage />} />
                 </Routes>

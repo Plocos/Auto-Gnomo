@@ -87,11 +87,30 @@ export function sniffMime(filename: string, declared: string): string | null {
   return null;
 }
 
+/** Qwen3-VL agrupa la imagen en bloques de 32 px. Un lado que no es múltiplo hace fallar mtmd. */
+const VISION_FACTOR = 32;
+const VISION_MAX_EDGE = 1024;
+
 async function toJpeg(bytes: Buffer): Promise<Buffer> {
-  return sharp(bytes)
+  const meta = await sharp(bytes, { failOn: 'none' }).rotate().metadata();
+  let width = meta.width ?? VISION_FACTOR;
+  let height = meta.height ?? VISION_FACTOR;
+  if (width < 1 || height < 1) throw new Error('La imagen no tiene un tamaño válido.');
+  const scale = Math.min(1, VISION_MAX_EDGE / Math.max(width, height));
+  width = Math.max(VISION_FACTOR, Math.round(width * scale));
+  height = Math.max(VISION_FACTOR, Math.round(height * scale));
+  width -= width % VISION_FACTOR;
+  height -= height % VISION_FACTOR;
+  width = Math.max(VISION_FACTOR, width);
+  height = Math.max(VISION_FACTOR, height);
+  return sharp(bytes, { failOn: 'none' })
     .rotate()
-    .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 85 })
+    .resize(width, height, {
+      fit: 'contain',
+      background: { r: 255, g: 255, b: 255 },
+    })
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .jpeg({ quality: 80 })
     .toBuffer();
 }
 

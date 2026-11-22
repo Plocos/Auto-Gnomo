@@ -283,6 +283,15 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: '007_assistant_modes',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE assistant_threads ADD COLUMN mode TEXT NOT NULL DEFAULT 'invoice';
+        ALTER TABLE assistant_messages ADD COLUMN import_json TEXT;
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: AppDb): void {

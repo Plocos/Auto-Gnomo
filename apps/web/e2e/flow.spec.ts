@@ -1,19 +1,10 @@
 /**
- * E2E smoke (Playwright) — requiere API+Web (pnpm dev) con seed.
+ * E2E de la API — requiere `pnpm dev:api` con seed.
+ * La interfaz solo corre dentro de la ventana de escritorio.
  */
 import { test, expect } from '@playwright/test';
 
-const WEB = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
 const API = process.env.VITE_API_URL ?? 'http://localhost:3001';
-
-test.describe.configure({ mode: 'serial' });
-
-test('profile open and see dashboard', async ({ page }) => {
-  await page.goto(`${WEB}/`);
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible({
-    timeout: 15000,
-  });
-});
 
 test('API: closed quarter blocks edit, correction works', async ({ request }) => {
   const vault = await request.get(`${API}/api/vault`);

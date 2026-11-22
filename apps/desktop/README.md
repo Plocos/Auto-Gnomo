@@ -21,7 +21,7 @@ Desde la raíz del monorepo:
 
 ```bash
 pnpm install
-pnpm dev:desktop
+pnpm dev
 ```
 
 Requisitos: Node ≥ 22, pnpm ≥ 9 y Rust en el PATH. En dev la API se lanza con `pnpm`/`tsx` contra el monorepo.

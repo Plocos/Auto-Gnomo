@@ -68,10 +68,10 @@ export function Button({
   disabled?: boolean;
 }) {
   const styles = {
-    default: 'border border-surface-border bg-white hover:bg-black/5',
-    primary: 'bg-surface-accent text-white hover:opacity-90',
-    danger: 'bg-surface-danger text-white hover:opacity-90',
-    ghost: 'hover:bg-black/5',
+    default: 'border border-surface-border bg-surface-field hover:bg-surface-hover',
+    primary: 'bg-surface-accent text-surface-on hover:opacity-90',
+    danger: 'bg-surface-danger text-surface-on hover:opacity-90',
+    ghost: 'hover:bg-surface-hover',
   }[variant];
   return (
     <button

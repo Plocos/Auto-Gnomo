@@ -60,7 +60,7 @@ export function Tax303Page() {
         actions={
           <>
             <select
-              className="border border-surface-border bg-white px-2 py-1 text-ui"
+              className="border border-surface-border bg-surface-field px-2 py-1 text-ui"
               value={activeQuarter}
               onChange={(e) => {
                 setUserPicked(true);

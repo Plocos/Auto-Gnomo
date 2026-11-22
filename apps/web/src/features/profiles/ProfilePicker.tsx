@@ -11,6 +11,7 @@ import {
   removeRecentProfile,
   revealProfileFolder,
 } from '../../lib/profile';
+import { ThemeToggle } from '../../components/ThemeToggle';
 import { Button } from '../../components/ui/primitives';
 
 type ProfilePickerProps = {
@@ -160,7 +161,7 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
           type="button"
           disabled={busy}
           onClick={onClose}
-          className="absolute right-3 top-3 rounded px-2 py-1 text-[12px] text-surface-muted hover:bg-black/5 hover:text-surface-ink disabled:opacity-50"
+          className="absolute right-3 top-3 rounded px-2 py-1 text-[12px] text-surface-muted hover:bg-surface-hover hover:text-surface-ink disabled:opacity-50"
           aria-label="Cerrar"
         >
           Cerrar
@@ -178,6 +179,9 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
         <code className="text-[11px]">vault.json</code>). Para uno nuevo, indica el nombre y la
         carpeta padre donde guardarlo.
       </p>
+      <div className="mt-2">
+        <ThemeToggle />
+      </div>
 
       {mode === 'home' && (
         <div className="mt-6 space-y-4">
@@ -193,7 +197,7 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
                       <button
                         type="button"
                         disabled={busy}
-                        className="min-w-0 flex-1 px-3 py-2 text-left hover:bg-black/5 disabled:opacity-50"
+                        className="min-w-0 flex-1 px-3 py-2 text-left hover:bg-surface-hover disabled:opacity-50"
                         onClick={() => enterApp.mutate({ path: p.path, name: p.name })}
                       >
                         <div className="text-[14px] font-medium">{p.name}</div>
@@ -207,7 +211,7 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
                             type="button"
                             disabled={busy}
                             title="Abrir ubicación"
-                            className="rounded px-2 py-1 text-[11px] text-surface-accent hover:bg-black/5 disabled:opacity-50"
+                            className="rounded px-2 py-1 text-[11px] text-surface-accent hover:bg-surface-hover disabled:opacity-50"
                             onClick={(e) => void onReveal(p.path, e)}
                           >
                             Ubicación
@@ -216,7 +220,7 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
                             type="button"
                             disabled={busy}
                             title="Quitar de la lista"
-                            className="rounded px-2 py-1 text-[11px] text-surface-danger hover:bg-black/5 disabled:opacity-50"
+                            className="rounded px-2 py-1 text-[11px] text-surface-danger hover:bg-surface-hover disabled:opacity-50"
                             onClick={(e) => void onRemove(p.path, p.name, e)}
                           >
                             Quitar
@@ -290,7 +294,7 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
             {finalPath && (
               <p className="mt-2 text-[12px] text-surface-ink">
                 Se creará:{' '}
-                <code className="break-all rounded bg-black/5 px-1 font-mono text-[11px]">
+                <code className="break-all rounded bg-surface-hover px-1 font-mono text-[11px]">
                   {finalPath}
                 </code>
               </p>
@@ -346,6 +350,6 @@ export function ProfilePicker({ variant, onClose }: ProfilePickerProps) {
   }
 
   return (
-    <div className="grid min-h-full place-items-center bg-surface-bg p-6">{panel}</div>
+    <div className="grid min-h-full place-items-center bg-surface p-6">{panel}</div>
   );
 }

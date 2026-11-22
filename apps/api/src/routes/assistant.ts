@@ -7,6 +7,7 @@ import { env } from '../config.js';
 import { getDb } from '../db/sqlite.js';
 import {
   acceptProposal,
+  confirmImport,
   createSampleThread,
   createThread,
   discardProposal,
@@ -89,9 +90,16 @@ export async function registerAssistantRoutes(app: FastifyInstance): Promise<voi
     return readAssistantStatus();
   });
 
-  app.get('/api/assistant/threads', async () => ({ threads: listThreads(getDb()) }));
+  app.get('/api/assistant/threads', async (req) => {
+    const mode = (req.query as { mode?: string }).mode;
+    const filter = mode === 'chat' || mode === 'invoice' ? mode : undefined;
+    return { threads: listThreads(getDb(), filter) };
+  });
 
-  app.post('/api/assistant/threads', async () => createThread(getDb()));
+  app.post('/api/assistant/threads', async (req) => {
+    const mode = (req.body as { mode?: string } | undefined)?.mode === 'chat' ? 'chat' : 'invoice';
+    return createThread(getDb(), mode);
+  });
 
   app.get('/api/assistant/threads/:threadId', async (req) => {
     const { threadId } = req.params as { threadId: string };
@@ -117,6 +125,12 @@ export async function registerAssistantRoutes(app: FastifyInstance): Promise<voi
       proposalId: string;
     };
     return acceptProposal(getDb(), threadId, messageId, proposalId, req.body);
+  });
+
+  app.post('/api/assistant/threads/:threadId/messages/:messageId/import', async (req) => {
+    const { threadId, messageId } = req.params as { threadId: string; messageId: string };
+    const message = await confirmImport(getDb(), threadId, messageId);
+    return { message };
   });
 
   app.post('/api/assistant/threads/:threadId/messages/:messageId/proposals/:proposalId/discard', async (req) => {

@@ -597,13 +597,13 @@ export function MovementsPage({ forcedType }: { forcedType?: string }) {
 
       <div className="mb-2 flex flex-wrap gap-2">
         <input
-          className="border border-surface-border bg-white px-2 py-1 text-ui"
+          className="border border-surface-border bg-surface-field px-2 py-1 text-ui"
           placeholder="Buscar…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <select
-          className="border border-surface-border bg-white px-2 py-1 text-ui"
+          className="border border-surface-border bg-surface-field px-2 py-1 text-ui"
           value={quarter}
           onChange={(e) => setQuarter(e.target.value)}
         >
@@ -710,7 +710,7 @@ export function MovementsPage({ forcedType }: { forcedType?: string }) {
           </tbody>
         </table>
         {!data.length && (
-          <div className="p-4 text-surface-muted">Sin movimientos. Usa Nuevo o Importar.</div>
+          <div className="p-4 text-surface-muted">Sin movimientos. Usa Nuevo o la IA, en modo Factura.</div>
         )}
       </div>
 

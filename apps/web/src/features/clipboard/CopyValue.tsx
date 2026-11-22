@@ -14,7 +14,7 @@ export function CopyValue({ display, value }: { display: string; value: string }
     <button
       type="button"
       title={`Copiar ${value}`}
-      className={`cursor-copy px-0.5 hover:bg-black/5 ${copied ? 'text-surface-ok' : ''}`}
+      className={`cursor-copy px-0.5 hover:bg-surface-hover ${copied ? 'text-surface-ok' : ''}`}
       onClick={async () => {
         await copyToClipboard(value);
         setCopied(true);

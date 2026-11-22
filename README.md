@@ -2,46 +2,32 @@
 
 Gestión centralizada de contabilidad y obligaciones fiscales para un trabajador autónomo en España.
 
-**App offline** (Tauri + web local). Cada **perfil** es una carpeta en el PC: nombre + SQLite. Sin registro ni login. La primera vez creas o abres un perfil; al reiniciar se carga el último.
+**Aplicación de escritorio**, offline. Cada **perfil** es una carpeta en el PC: nombre + SQLite. Sin registro ni login. La primera vez creas o abres un perfil; al reiniciar se carga el último.
 
 **Una única fuente de verdad:** los movimientos. Trimestres, Modelo 130, Modelo 303 y dashboards se calculan a partir de ellos.
 
 ## Stack
 
-- **UI:** React + TypeScript + Vite + Tailwind (`apps/web`)
-- **Lógica:** Node.js + Fastify + Zod (`apps/api`)
+- **Ventana:** Tauri 2 (`apps/desktop`)
+- **Interfaz:** React + TypeScript + Vite + Tailwind, solo dentro de esa ventana (`apps/web`)
+- **Lógica:** Node.js + Fastify + Zod (`apps/api`), en local
 - **Datos:** SQLite en `{bóveda}/autonomous.db` + `vault.json`
-- **Escritorio:** Tauri 2 (`apps/desktop`)
 - **Monorepo:** pnpm workspaces
 
 ## Requisitos
 
 - Node.js ≥ 22 (SQLite nativo)
 - pnpm ≥ 9
-- Rust (solo para empaquetar Tauri)
+- Rust (en el PATH, para la ventana de escritorio)
 
-## Arranque rápido (dev navegador)
+## Arranque
 
 ```bash
-cp .env.example .env
 pnpm install
-pnpm migrate
-pnpm seed
 pnpm dev
 ```
 
-- Web: http://localhost:5173
-- API: http://localhost:3001
-- Dev web: perfil en `./data` (`vault.json` + `autonomous.db`)
-
-## App de escritorio
-
-**Desarrollo** (necesitas Node/pnpm/Rust):
-
-```bash
-pnpm install
-pnpm dev:desktop
-```
+Se abre la ventana de Auto-Gnomo. Al elegir un perfil, la API arranca sola en `127.0.0.1:3001`.
 
 **Instalador para el PC** (autocontenido: no hace falta Node en el cliente):
 
@@ -59,10 +45,10 @@ Si la app muestra datos vacíos y en Ajustes la carpeta de datos está en blanco
 
 | Comando | Descripción |
 |---|---|
-| `pnpm dev` | API + Web (`./data`) |
-| `pnpm dev:desktop` | App Tauri (dev) |
+| `pnpm dev` | App de escritorio (desarrollo) |
 | `pnpm build:desktop` | Instalador Windows autocontenido |
-| `pnpm migrate` / `pnpm seed` | Schema y datos de ejemplo |
+| `pnpm dev:api` | API suelta, sin ventana (bóveda en `./data`) |
+| `pnpm migrate` / `pnpm seed` | Schema y datos de ejemplo de esa bóveda |
 
 ## Backup
 
@@ -71,12 +57,12 @@ Copia la carpeta de la bóveda entera (con la app cerrada). Esa carpeta es tu gu
 ## Estructura
 
 ```
-apps/web          Frontend
+apps/desktop      Ventana Tauri
+apps/web          Interfaz de esa ventana
 apps/api          API + SQLite
-apps/desktop      Shell Tauri
 packages/shared   Money, schemas Zod
 packages/tax-rules Reglas AEAT
-data/             Bóveda de desarrollo
+data/             Bóveda de `pnpm dev:api`
 ```
 
 ## Responsabilidad

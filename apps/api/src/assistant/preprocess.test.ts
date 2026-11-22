@@ -39,6 +39,9 @@ describe('prepareDocument', () => {
     expect(doc.pages).toHaveLength(1);
     expect(doc.pages[0]?.mime).toBe('image/jpeg');
     expect(doc.pages[0]?.bytes.subarray(0, 2).toString('hex')).toBe('ffd8');
+    const out = await sharp(doc.pages[0]!.bytes).metadata();
+    expect(out.width! % 32).toBe(0);
+    expect(out.height! % 32).toBe(0);
   });
 
   it('saca texto e imagen de un PDF de una página', async () => {

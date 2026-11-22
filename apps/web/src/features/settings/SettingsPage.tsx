@@ -451,7 +451,7 @@ export function SettingsPage() {
       </div>
       <AssistantModelSettings />
       <p className="mt-4 text-[12px] text-surface-muted">
-        Backup: copia la carpeta del perfil completa. El modelo del asistente no va en esa carpeta.
+        Backup: copia la carpeta del perfil completa. El modelo de la IA no va en esa carpeta.
       </p>
     </div>
   );

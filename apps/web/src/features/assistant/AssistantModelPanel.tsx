@@ -11,6 +11,56 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function formatEta(seconds: number): string {
+  if (seconds < 45) return 'queda menos de un minuto';
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) return minutes === 1 ? 'queda cerca de 1 min' : `quedan unos ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (rest === 0) return hours === 1 ? 'queda cerca de 1 h' : `quedan unas ${hours} h`;
+  return `quedan unas ${hours} h ${rest} min`;
+}
+
+function useDownloadEta(data: AssistantStatus | undefined): string | null {
+  const samples = useRef<{ t: number; received: number; fileIndex: number }[]>([]);
+  const [label, setLabel] = useState<string | null>(null);
+  const progress = data?.downloading ? data.progress : null;
+
+  useEffect(() => {
+    if (!progress?.total || progress.total <= 0) {
+      samples.current = [];
+      setLabel(null);
+      return;
+    }
+    const now = Date.now();
+    const prev = samples.current[samples.current.length - 1];
+    if (!prev || prev.fileIndex !== progress.fileIndex || progress.received < prev.received) {
+      samples.current = [];
+    }
+    const last = samples.current[samples.current.length - 1];
+    if (!last || progress.received !== last.received) {
+      samples.current.push({ t: now, received: progress.received, fileIndex: progress.fileIndex });
+    }
+    samples.current = samples.current.filter((sample) => now - sample.t <= 20_000);
+    const first = samples.current[0];
+    const latest = samples.current[samples.current.length - 1];
+    if (!first || !latest || latest.t - first.t < 3000) {
+      setLabel(null);
+      return;
+    }
+    const bytes = latest.received - first.received;
+    const seconds = (latest.t - first.t) / 1000;
+    if (bytes <= 0 || seconds <= 0) {
+      setLabel(null);
+      return;
+    }
+    const remaining = Math.max(0, Math.round((progress.total - progress.received) / (bytes / seconds)));
+    setLabel(formatEta(remaining));
+  }, [progress?.received, progress?.total, progress?.fileIndex]);
+
+  return label;
+}
+
 function useAssistantModel(warm: boolean) {
   const qc = useQueryClient();
   const status = useQuery({
@@ -93,6 +143,7 @@ function useAssistantModel(warm: boolean) {
 function DownloadProgress({ data }: { data: AssistantStatus }) {
   const progress = data.progress;
   const pct = progress?.percent;
+  const eta = useDownloadEta(data);
   if (!data.downloading) return null;
   return (
     <div className="mt-2">
@@ -100,14 +151,13 @@ function DownloadProgress({ data }: { data: AssistantStatus }) {
         <div className="h-2 bg-surface-accent" style={{ width: `${pct ?? 0}%` }} />
       </div>
       <p className="mt-1 text-[12px] text-surface-muted">
-        {progress?.label ?? 'Descargando'}
-        {progress ? ` · archivo ${progress.fileIndex}/${progress.fileCount}` : ''}
-        {pct != null ? ` · ${pct}%` : ''}
+        {pct != null ? `${pct}%` : 'Descargando'}
         {progress?.total
           ? ` (${formatBytes(progress.received)} / ${formatBytes(progress.total)})`
           : progress
             ? ` (${formatBytes(progress.received)})`
             : ''}
+        {eta ? ` · ${eta}` : ''}
       </p>
     </div>
   );
@@ -119,10 +169,11 @@ export function AssistantSetup() {
   return (
     <section className="border border-surface-border bg-surface-panel p-3" aria-labelledby="assistant-setup-title">
       <h2 id="assistant-setup-title" className="text-[13px] font-semibold text-surface-ink">
-        Hace falta un modelo para leer documentos
+        Hace falta un modelo para el chat y para leer facturas
       </h2>
       <p className="mt-1 text-[13px] text-surface-muted">
-        El asistente no puede leer facturas ni gastos hasta que {name} esté en este PC.
+        La IA no puede responder ni leer fotos o PDF hasta que {name} esté en este PC.
+        Las tablas CSV, TSV y JSON se importan sin el modelo.
         La descarga son unos 6 GB, se hace una vez y no sale del ordenador.
       </p>
       <div className="mt-3">
@@ -162,19 +213,19 @@ export function AssistantModelSettings() {
   };
 
   const erase = () => {
-    if (!window.confirm(`Se borrará ${name} de este PC. El asistente no podrá leer documentos hasta que lo descargues otra vez.`)) return;
+    if (!window.confirm(`Se borrará ${name} de este PC. La IA no podrá responder ni leer documentos hasta que lo descargues otra vez.`)) return;
     void remove();
   };
 
   return (
     <section className="mt-4 border border-surface-border bg-surface-panel p-3" aria-labelledby="assistant-model-settings">
       <h3 id="assistant-model-settings" className="text-[12px] font-semibold uppercase tracking-wide text-surface-muted">
-        Modelo del asistente
+        Modelo de la IA
       </h3>
       <p className="mt-1 text-[12px] text-surface-ink">
         {installed
           ? `${name}. Ocupa ${formatBytes(data?.bytesOnDisk ?? 0)} en este PC.`
-          : `${name} no está descargado. Hace falta para leer facturas y gastos. Unos 6 GB.`}
+          : `${name} no está descargado. Hace falta para el chat y para leer facturas. Unos 6 GB.`}
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {!installed && (

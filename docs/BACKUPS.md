@@ -24,9 +24,9 @@ Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue
   ForEach-Object { taskkill /F /T /PID $_.OwningProcess }
 ```
 
-3. Vuelve a abrir con `pnpm dev:desktop` y elige el perfil reciente (p. ej. `G:\Mi unidad\Auto-Gnomo\Antonio`).
+3. Vuelve a abrir con `pnpm dev` y elige el perfil reciente (p. ej. `G:\Mi unidad\Auto-Gnomo\Antonio`).
 4. Comprueba en Ajustes que la ruta es la de Drive y que los movimientos reaparecen.
 
 **No** crees un perfil nuevo con el mismo nombre encima de la carpeta buena: eso genera una DB vacía y confunde la lista de recientes.
 
-La carpeta `./data` del monorepo es solo para `pnpm dev` (navegador); no es la bóveda de escritorio.
+La carpeta `./data` del monorepo es la bóveda de `pnpm dev:api`, `pnpm migrate` y `pnpm seed`. La app de escritorio usa la carpeta de perfil que elijas.

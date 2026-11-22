@@ -169,7 +169,7 @@ function AlertResolveModal({
         </p>
 
         {catalog.action === 'link_asset' && alert.movementId && (
-          <div className="mb-3 space-y-2 border border-surface-border bg-white p-2">
+          <div className="mb-3 space-y-2 border border-surface-border bg-surface-field p-2">
             <p className="text-[12px] text-surface-muted">
               Generar activo y plan desde «{movement.data?.concept ?? '…'}».
             </p>
@@ -194,7 +194,7 @@ function AlertResolveModal({
         <div className="flex flex-wrap justify-end gap-2">
           {alert.movementId && (
             <Link
-              className="inline-flex items-center border border-surface-border px-3 py-1 text-ui hover:bg-black/5"
+              className="inline-flex items-center border border-surface-border px-3 py-1 text-ui hover:bg-surface-hover"
               to={`/movimientos?highlight=${alert.movementId}&alert=${alert.code}`}
               onClick={onClose}
             >

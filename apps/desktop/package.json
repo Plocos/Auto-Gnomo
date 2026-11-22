@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "powershell -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "build": "echo \"use pnpm build:desktop\"",
     "prepare-api-runtime": "node ./scripts/prepare-api-runtime.mjs",
     "fetch-webview2": "powershell -ExecutionPolicy Bypass -File ./scripts/fetch-webview2.ps1",

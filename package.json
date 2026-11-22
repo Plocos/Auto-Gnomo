@@ -4,9 +4,8 @@
   "version": "0.1.0",
   "description": "Gestión contable y fiscal para autónomos en España (offline)",
   "scripts": {
-    "dev": "pnpm -r --parallel --filter @autonomous/api --filter @autonomous/web dev",
+    "dev": "pnpm --filter @autonomous/desktop dev",
     "dev:api": "pnpm --filter @autonomous/api dev",
-    "dev:web": "pnpm --filter @autonomous/web dev",
     "dev:desktop": "pnpm --filter @autonomous/desktop dev",
     "build": "pnpm -r build",
     "build:desktop": "pnpm --filter @autonomous/desktop build:desktop",

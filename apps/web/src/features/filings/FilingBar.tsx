@@ -138,7 +138,7 @@ export function FilingBar({
               Fecha
               <input
                 type="date"
-                className="border border-surface-border bg-white px-1 py-0.5"
+                className="border border-surface-border bg-surface-field px-1 py-0.5"
                 value={filedAt}
                 onChange={(e) => setFiledAt(e.target.value)}
               />
@@ -183,7 +183,7 @@ export function FilingBar({
           <label className="ml-auto flex items-center gap-1">
             Ver
             <select
-              className="border border-surface-border bg-white px-1 py-0.5"
+              className="border border-surface-border bg-surface-field px-1 py-0.5"
               value={view.selectedId}
               onChange={(e) => view.select(e.target.value)}
             >

@@ -253,6 +253,31 @@ export const assistantFileSchema = z.object({
   truncated: z.boolean().optional(),
 });
 
+export const assistantImportRowSchema = z.object({
+  row: z.number().int(),
+  ok: z.boolean(),
+  errors: z.array(z.string()),
+  warnings: z.array(z.string()),
+  filename: z.string().optional(),
+  concept: z.string().optional(),
+  fiscalDate: z.string().optional(),
+  type: z.string().optional(),
+  totalCents: z.number().int().optional(),
+});
+
+export const assistantImportSchema = z.object({
+  status: z.enum(['pending', 'saved']),
+  filename: z.string(),
+  summary: z.object({
+    total: z.number().int(),
+    ok: z.number().int(),
+    errors: z.number().int(),
+    warnings: z.number().int(),
+  }),
+  rows: z.array(assistantImportRowSchema).max(500),
+  createdCount: z.number().int().optional(),
+});
+
 export const assistantMessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),
@@ -262,6 +287,7 @@ export const assistantMessageSchema = z.object({
   proposals: z.array(assistantProposalSchema),
   summary: z.string().optional(),
   warnings: z.array(z.string()),
+  importPreview: assistantImportSchema.optional(),
   replyToId: z.string().optional(),
   createdAt: z.string(),
 });
@@ -299,6 +325,7 @@ export type AssetCreateInput = z.infer<typeof assetCreateSchema>;
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
 export type AssistantAcceptInput = z.input<typeof assistantAcceptSchema>;
 export type AssistantFile = z.infer<typeof assistantFileSchema>;
+export type AssistantImport = z.infer<typeof assistantImportSchema>;
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 export type AssistantStatus = z.infer<typeof assistantStatusSchema>;
 export type AssistantProgress = z.infer<typeof assistantProgressSchema>;

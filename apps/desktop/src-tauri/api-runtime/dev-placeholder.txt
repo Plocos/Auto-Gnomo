@@ -1,0 +1,3 @@
+Esta carpeta se rellena con Node y la API al generar el instalador (pnpm build:desktop).
+El archivo existe para que tauri dev pueda compilar: el glob api-runtime/**/* tiene que encontrar algo.
+En desarrollo la API no usa estos archivos; la arranca pnpm/tsx.
