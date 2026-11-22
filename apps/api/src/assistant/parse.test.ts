@@ -9,6 +9,7 @@ import {
   normalizeModelOutput,
   type SourceFileMeta,
 } from './parse.js';
+import { asksForMovement, asksToSave } from './prompt.js';
 
 const files: SourceFileMeta[] = [{ id: 'f1', filename: 'factura.pdf' }];
 
@@ -213,5 +214,14 @@ describe('assistantAcceptSchema', () => {
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.coefficientBps).toBeUndefined();
+  });
+});
+
+describe('asksForMovement', () => {
+  it('detecta un alta y no una pregunta', () => {
+    expect(asksForMovement('créame un movimiento de ingreso de prueba')).toBe(true);
+    expect(asksForMovement('cuánto IVA llevo este trimestre')).toBe(false);
+    expect(asksToSave('lo que quiero es que lo guardes en movimientos')).toBe(true);
+    expect(asksToSave('cuánto IVA llevo este trimestre')).toBe(false);
   });
 });

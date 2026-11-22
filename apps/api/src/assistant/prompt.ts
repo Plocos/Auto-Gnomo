@@ -115,7 +115,63 @@ Cómo funciona Auto-Gnomo:
 - El modelo 303 es la liquidación del IVA (IVA repercutido menos IVA soportado deducible). Si sale negativo queda a compensar.
 - Inmovilizado es un bien que se amortiza. No se trata como un gasto corriente del trimestre en el que se compra.
 - Las alertas avisan de datos que faltan o no cuadran. La auditoría guarda quién cambió qué.
-- En el modo Factura se leen fotos, PDF y tablas CSV, TSV o JSON. Nada de eso se guarda hasta que la persona lo confirma.`;
+- Las fotos, los PDF y las tablas CSV, TSV o JSON se leen en esta misma conversación. Nada se guarda hasta que la persona confirma la ficha.`;
+}
+
+function plain(prompt: string): string {
+  return prompt
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+}
+
+export function asksForMovement(prompt: string): boolean {
+  const text = plain(prompt);
+  const verb = /\b(crea|creame|crear|anade|anadir|registra|registrar|prepara|preparar|propone|proponme|mete|meter|anota|anotar|guarda|guardar|guardalo|guardes)\b/.test(text);
+  const thing = /\b(movimiento|movimientos|ingreso|gasto|factura|ticket|cuota|subvencion|prueba)\b/.test(text);
+  return verb && thing;
+}
+
+export function asksToSave(prompt: string): boolean {
+  const text = plain(prompt);
+  return /\b(guarda|guardar|guardalo|guardes|guardad|registra|registrar|registralo)\b/.test(text)
+    && /\b(movimiento|movimientos|ingreso|gasto|factura|ticket|esto|lo)\b/.test(text);
+}
+
+export function movementTurnPrompt(dataContext: string, fiscalBlock: string): string {
+  return `${systemPrompt()}
+
+La persona pide crear un movimiento, no una explicación. Rellena el JSON con lo que diga. Si es una prueba y no da fecha, usa una fecha del ejercicio activo. Si no da base, usa 1000. Si no da IVA, usa 21. summary es una sola frase. No preguntes por caja, devengo ni tipo de IVA.
+
+${fiscalBlock}
+
+Datos del ejercicio:
+${dataContext}`;
+}
+
+export function textTurnPrompt(dataContext: string, fiscalBlock: string): string {
+  return `Eres la IA de Auto-Gnomo, el programa local de un autónomo en España. Respondes en español.
+
+Decide por el mensaje, no por un modo:
+
+1. Si la persona pide crear, añadir, registrar, proponer o preparar un movimiento (también «de prueba»), responde únicamente con el objeto JSON de abajo, sin markdown y sin texto alrededor. Rellena lo que haya dicho. Si es una prueba y no da fecha, usa una fecha del ejercicio activo. Si no da base, usa 1000. Si no da IVA, usa 21. summary es una sola frase. No preguntes por criterio de caja, devengo ni tipo de IVA: eso se ajusta en la ficha antes de guardar.
+2. Si pregunta por sus datos o por cómo funciona la aplicación, responde en prosa clara. Puedes usar negrita y listas. No inventes importes, fechas, nombres ni NIF: si un dato no está en el contexto, dilo. No devuelvas JSON. Nunca digas que has guardado un movimiento ni inventes un identificador: tú no escribes en la base de datos.
+
+Cuando toque el JSON, usa este esquema y estas reglas:
+${SYSTEM.slice(SYSTEM.indexOf('Esquema:'))}
+
+Cómo funciona Auto-Gnomo:
+- Cada movimiento es un ingreso, un gasto, la cuota de autónomo o una subvención. Tiene base, IVA, IRPF si lo hay, tercero y fecha fiscal.
+- Criterio de devengo: el trimestre es el de la fecha de la factura. Criterio de caja: el trimestre es el del cobro o el pago.
+- El ejercicio se parte en T1, T2, T3 y T4. Cuando un trimestre se presenta queda cerrado y no se edita; las correcciones van aparte.
+- El modelo 130 es el pago fraccionado del IRPF. El modelo 303 es la liquidación del IVA.
+- Inmovilizado es un bien que se amortiza. Las alertas avisan de datos que faltan. La auditoría guarda quién cambió qué.
+- Nada de lo que propongas se guarda hasta que la persona acepta la ficha.
+
+Datos calculados por la aplicación. Úsalos como única fuente de cifras reales:
+${dataContext}
+
+${fiscalBlock}`;
 }
 
 export function repairPrompt(previous: string): string {

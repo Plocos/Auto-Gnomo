@@ -219,8 +219,8 @@ export function ProposalCard({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <h3 className="text-[13px] font-semibold text-surface-ink">Movimiento propuesto</h3>
       </div>
-      <div className="grid gap-3 lg:grid-cols-[220px_1fr]">
-        <div className="min-h-24 border border-surface-border bg-surface p-2">
+      <div className={previewUrl ? 'grid gap-3 lg:grid-cols-[220px_1fr]' : 'grid gap-3'}>
+        {previewUrl && <div className="min-h-24 border border-surface-border bg-surface p-2">
           {previewUrl && (imagePreview || pdfPreview) && (
             <div>
               <div className="relative">
@@ -240,11 +240,13 @@ export function ProposalCard({
               <p className="mt-1 text-[11px] text-surface-accent">Pulsa para verlo a pantalla completa</p>
             </div>
           )}
-          {!previewUrl && <p className="text-[12px] text-surface-muted">Sin vista previa.</p>}
           {proposal.evidence && (
             <p className="mt-2 text-[11px] text-surface-muted">«{proposal.evidence}»</p>
           )}
-        </div>
+        </div>}
+        {!previewUrl && proposal.evidence && (
+          <p className="text-[11px] text-surface-muted">«{proposal.evidence}»</p>
+        )}
         <div className="grid gap-2 sm:grid-cols-2">
           <Field label="Documento">
             <select className={fieldClass} value={form.documentKind} onChange={(e) => set('documentKind', e.target.value as FormState['documentKind'])}>

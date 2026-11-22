@@ -13,6 +13,7 @@ import {
   type AssistantMessage,
   type AssistantProposal,
   type MovementCreateInput,
+  formatEuros,
 } from '@autonomous/shared';
 import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
@@ -22,14 +23,14 @@ import { getDataDir } from '../db/sqlite.js';
 import { createAssetFromMovement } from '../domain/assets.js';
 import { parseImportText } from '../domain/import-export.js';
 import { createMovement, deleteMovement } from '../domain/movements.js';
-import { buildChatContext, chatPrompt } from './chat.js';
+import { buildChatContext } from './chat.js';
 import { MAX_IMAGES } from './catalog.js';
 import { loadPromptContext } from './context.js';
 import { applyPartyHistory } from './history.js';
 import { constrainCategory, extractJsonObject, normalizeModelOutput } from './parse.js';
 import { prepareDocument, sniffMime } from './preprocess.js';
-import { contextBlock, repairPrompt, systemPrompt } from './prompt.js';
-import { reviewProposal } from './review.js';
+import { asksForMovement, asksToSave, contextBlock, movementTurnPrompt, repairPrompt, systemPrompt, textTurnPrompt } from './prompt.js';
+import { proposalToMovementInput, reviewProposal } from './review.js';
 import { chatText, chatVision, clearReadStep, reportReadStep } from './runtime.js';
 
 export type Upload = { filename: string; mime: string; buffer: Buffer };
@@ -260,24 +261,88 @@ export async function postMessage(
   input: { prompt: string; retryMessageId?: string; uploads: Upload[] },
 ): Promise<{ user: AssistantMessage; assistant: AssistantMessage }> {
   const thread = requireThread(db, threadId);
-  if (threadMode(thread) === 'chat') return postChatMessage(db, thread, input);
-  return postInvoiceMessage(db, thread, input);
+  if (input.uploads.length || retryHasFiles(db, thread.id, input.retryMessageId)) {
+    return postInvoiceMessage(db, thread, input);
+  }
+  return postTextMessage(db, thread, input);
 }
 
-async function postChatMessage(
+function readProposals(
+  answer: string,
+  temporalCriterion: 'devengo' | 'caja',
+): { proposals: AssistantProposal[]; summary: string; prose: string } {
+  try {
+    const normalized = normalizeModelOutput(extractJsonObject(answer), { temporalCriterion });
+    if (normalized.proposals.length) {
+      return { proposals: normalized.proposals, summary: normalized.summary, prose: '' };
+    }
+    if (normalized.summary) return { proposals: [], summary: '', prose: normalized.summary };
+  } catch {
+    /* la respuesta es prosa */
+  }
+  return { proposals: [], summary: '', prose: '' };
+}
+
+function retryHasFiles(db: AppDb, threadId: string, retryMessageId: string | undefined): boolean {
+  if (!retryMessageId) return false;
+  const previous = loadMessage(db, threadId, retryMessageId);
+  const sourceId = previous.reply_to_id ?? previous.id;
+  const source = sourceId === previous.id ? previous : loadMessage(db, threadId, sourceId);
+  return filesOf(source).length > 0;
+}
+
+async function persistProposals(
+  db: AppDb,
+  proposals: AssistantProposal[],
+): Promise<string[]> {
+  const lines: string[] = [];
+  for (const proposal of proposals) {
+    const input = proposalToMovementInput(proposal);
+    if (!input) {
+      lines.push('Faltan concepto, fecha o base para guardarlo.');
+      continue;
+    }
+    const blocking = (proposal.issues ?? []).find((issue) => issue.severity === 'error');
+    if (blocking) {
+      lines.push(blocking.message);
+      continue;
+    }
+    try {
+      const created = await createMovement(db, input, { workingQuarter: workingQuarter(db) });
+      proposal.status = 'accepted';
+      proposal.movementId = String(created.movement.id);
+      lines.push(
+        `Guardado en movimientos: ${proposal.concept}, ${formatEuros(proposal.taxBaseCents ?? 0)}, fecha fiscal ${proposal.fiscalDate}.`,
+      );
+    } catch (err) {
+      lines.push(err instanceof Error ? err.message : 'No se pudo guardar.');
+    }
+  }
+  return lines;
+}
+
+function threadPending(db: AppDb, threadId: string): { messageId: string; proposals: AssistantProposal[] }[] {
+  const rows = db
+    .prepare(
+      `SELECT id, proposals_json FROM assistant_messages
+       WHERE thread_id = ? AND role = 'assistant' ORDER BY created_at ASC`,
+    )
+    .all(threadId) as { id: string; proposals_json: string }[];
+  return rows
+    .map((row) => ({
+      messageId: row.id,
+      proposals: parseList(row.proposals_json, assistantProposalSchema, []),
+    }))
+    .filter((row) => row.proposals.some((proposal) => proposal.status === 'pending'));
+}
+
+async function postTextMessage(
   db: AppDb,
   thread: ThreadRow,
   input: { prompt: string; retryMessageId?: string; uploads: Upload[] },
 ): Promise<{ user: AssistantMessage; assistant: AssistantMessage }> {
-  if (input.uploads.length) {
-    throw new AppError(
-      ErrorCodes.VALIDATION_ERROR,
-      'En el modo Chat no se adjuntan archivos. Cambia a Factura para leer un documento o una tabla.',
-      400,
-    );
-  }
   const prompt = input.prompt.trim().slice(0, 2000);
-  if (!prompt) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Escribe una pregunta.', 400);
+  if (!prompt) throw new AppError(ErrorCodes.VALIDATION_ERROR, 'Escribe un mensaje.', 400);
 
   const now = nowIso();
   const userId = insertUserMessage(db, thread.id, prompt, [], null, now);
@@ -294,11 +359,43 @@ async function postChatMessage(
     content: row.content.slice(0, 2000),
   }));
 
+  const ctx = loadPromptContext(db, activeYear(db));
+  const creating = asksForMovement(prompt);
+  const saving = asksToSave(prompt);
+
+  if (saving) {
+    const pending = threadPending(db, thread.id);
+    if (pending.length) {
+      const lines: string[] = [];
+      for (const group of pending) {
+        lines.push(...(await persistProposals(db, group.proposals.filter((proposal) => proposal.status === 'pending'))));
+        saveProposals(db, group.messageId, group.proposals);
+      }
+      const content = lines.join('\n') || 'No había una ficha pendiente que guardar.';
+      const id = newId();
+      const createdAt = nowIso();
+      db.prepare(
+        `INSERT INTO assistant_messages
+          (id, thread_id, role, content, files_json, proposals_json, summary, warnings_json, reply_to_id, created_at)
+         VALUES (?, ?, 'assistant', ?, '[]', '[]', ?, '[]', ?, ?)`,
+      ).run(id, thread.id, content, content.slice(0, 240), userId, createdAt);
+      db.prepare(`UPDATE assistant_threads SET updated_at = ? WHERE id = ?`).run(createdAt, thread.id);
+      return { user: toMessage(loadMessage(db, thread.id, userId)), assistant: toMessage(loadMessage(db, thread.id, id)) };
+    }
+  }
+
   let answer: string;
   try {
     reportReadStep(1, 'Reuniendo tus datos');
-    const context = await buildChatContext(db, prompt);
-    answer = await chatText(chatPrompt(context), [...history, { role: 'user', content: prompt }]);
+    const dataContext = await buildChatContext(db, prompt);
+    const fiscal = contextBlock(ctx);
+    const userTurn = { role: 'user' as const, content: prompt };
+    answer = creating || saving
+      ? await chatText(movementTurnPrompt(dataContext, fiscal), saving ? [...history, userTurn] : [userTurn])
+      : await chatText(textTurnPrompt(dataContext, fiscal), [...history, userTurn]);
+    if ((creating || saving) && !readProposals(answer, ctx.temporalCriterion).proposals.length) {
+      answer = await chatText(systemPrompt(), [{ role: 'user', content: repairPrompt(answer) }]);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const status = message.includes('Descarga el modelo') ? 409 : 502;
@@ -307,13 +404,43 @@ async function postChatMessage(
     clearReadStep();
   }
 
+  const read = readProposals(answer, ctx.temporalCriterion);
+  let summary = '';
+  let proposals: AssistantProposal[] = [];
+  let prose = read.prose || answer.trim();
+  if (read.proposals.length) {
+    const quarter = workingQuarter(db);
+    proposals = read.proposals.map((proposal) =>
+      reviewProposal(db, applyPartyHistory(constrainCategory(proposal, ctx.categoryKeys), ctx.history), quarter),
+    );
+    if (saving) {
+      const lines = await persistProposals(db, proposals);
+      summary = lines.join('\n') || 'No se pudo guardar.';
+    } else {
+      summary = read.summary || 'Revisa el movimiento antes de guardarlo.';
+    }
+  } else if (creating || saving) {
+    prose = saving
+      ? 'No pude guardar el movimiento. Repite tipo, fecha y base.'
+      : 'No pude preparar la ficha. Repite el tipo, la fecha y la base.';
+  }
+
+  const content = proposals.length ? summary : prose;
   const id = newId();
   const createdAt = nowIso();
   db.prepare(
     `INSERT INTO assistant_messages
       (id, thread_id, role, content, files_json, proposals_json, summary, warnings_json, reply_to_id, created_at)
-     VALUES (?, ?, 'assistant', ?, '[]', '[]', ?, '[]', ?, ?)`,
-  ).run(id, thread.id, answer.trim(), answer.trim().slice(0, 240), userId, createdAt);
+     VALUES (?, ?, 'assistant', ?, '[]', ?, ?, '[]', ?, ?)`,
+  ).run(
+    id,
+    thread.id,
+    content,
+    JSON.stringify(proposals),
+    proposals.length ? summary : prose.slice(0, 240),
+    userId,
+    createdAt,
+  );
   db.prepare(`UPDATE assistant_threads SET updated_at = ? WHERE id = ?`).run(createdAt, thread.id);
   return { user: toMessage(loadMessage(db, thread.id, userId)), assistant: toMessage(loadMessage(db, thread.id, id)) };
 }
